@@ -11,6 +11,7 @@ public class CourseService {
     /**
      * 查询所有已发布的课程及其教师名称
      */
+
     public List<Course> getPublishedCourses() {
         List<Course> courses = new ArrayList<>();
         Connection conn = null;
@@ -209,7 +210,7 @@ public class CourseService {
             e.printStackTrace();
             return false;
         } finally {
-            // DBUtils.close(conn, pstmt, null); // 确保关闭
+            DBUtils.close(conn, pstmt, null); // 确保关闭
         }
     }
 
@@ -217,9 +218,43 @@ public class CourseService {
      * 获取所有待审核的课程列表
      */
     public List<Course> getPendingCourses() {
-        // 实现逻辑与 getPublishedCourses 类似，但 WHERE status = 'Pending'
-        // ... (此处省略详细实现，确保返回的是 status 为 Pending 的课程列表)
-        return new ArrayList<>();
+        List<Course> courses = new ArrayList<>();
+        Connection conn = null;
+        Statement stmt = null;
+        ResultSet rs = null;
+
+        String sql = "SELECT c.*, u.user_name AS teacher_name " +
+                "FROM course_info c " +
+                "JOIN user_info u ON c.teacher_id = u.user_id " +
+                "WHERE c.status = 'Pending'";
+
+        try {
+            conn = DBUtils.getConnection();
+            stmt = conn.createStatement();
+            rs = stmt.executeQuery(sql);
+
+            while (rs.next()) {
+                Course course = new Course(
+                        rs.getString("course_code"),
+                        rs.getString("course_name"),
+                        rs.getDouble("credit"),
+                        rs.getInt("capacity_limit"),
+                        rs.getInt("current_selected"),
+                        rs.getString("teacher_name"),
+                        rs.getString("schedule_time")
+                );
+                course.setStatus(rs.getString("status"));
+                course.setClassHour(rs.getInt("class_hour"));
+                course.setClassroom(rs.getString("classroom"));
+                course.setCourseType(rs.getString("course_type"));
+                courses.add(course);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } finally {
+            DBUtils.close(conn, stmt, rs);
+        }
+        return courses;
     }
     // 延续 package service; 中的 CourseService.java 类
 
@@ -244,14 +279,45 @@ public class CourseService {
             rs = stmt.executeQuery(sql);
 
             while (rs.next()) {
+                Course course = new Course(
+                        rs.getString("course_code"),
+                        rs.getString("course_name"),
+                        0, // 视图中无学分，可忽略
+                        rs.getInt("capacity_limit"),
+                        rs.getInt("current_selected"),
+                        rs.getString("teacher_name"),
+                        "" // 视图中无时间，可忽略
+                );
+                course.setDescription(rs.getString("saturation_rate")); // 用description暂存饱和度
+                courses.add(course);
                 // ... 将 rs 结果封装到 Course 或新的 Stats DTO 中
                 // ... courses.add(...)
             }
         } catch (SQLException e) {
             e.printStackTrace();
         } finally {
-            // DBUtils.close(conn, stmt, rs); // 确保关闭
+            DBUtils.close(conn, stmt, rs); // 确保关闭
         }
         return courses;
+    }
+
+    //学生退课功能的实现
+    public String dropCourse(String studentId, String courseCode) {
+        String sql = "UPDATE selection_record SET status = 'Dropped' WHERE student_id = ? AND course_code = ? AND status = 'Selected'";
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+
+        try {
+            conn = DBUtils.getConnection();
+            pstmt = conn.prepareStatement(sql);
+            pstmt.setString(1, studentId);
+            pstmt.setString(2, courseCode);
+            int rows = pstmt.executeUpdate();
+            return rows > 0 ? "退课成功" : "退课失败：未找到选课记录";
+        } catch (SQLException e) {
+            return "退课失败：" + e.getMessage();
+        } finally {
+            DBUtils.close(conn, pstmt, null);
+        }
     }
 }
