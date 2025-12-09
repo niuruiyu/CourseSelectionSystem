@@ -2,6 +2,9 @@ package service;
 
 import model.User;
 import util.DBUtils;
+
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,35 +17,44 @@ public class UserService {
      * @param password 用户输入的密码
      * @return 登录成功返回 User 对象，失败返回 null
      */
+    /**
+     * 验证用户登录（使用加密密码验证）
+     */
     public User login(String account, String password) {
-        String sql = "SELECT user_id, user_name, role, contact, department, create_time " +
+        // 先查询用户信息
+        String sql = "SELECT user_id, user_name, role, contact, department, create_time, password " +
                      "FROM user_info " +
-                     "WHERE account = ? AND password = SHA2(?, 256)";
-
+                     "WHERE account = ?";
+        
         Connection conn = null;
         PreparedStatement pstmt = null;
         ResultSet rs = null;
         User user = null;
-
+        
         try {
             conn = DBUtils.getConnection();
             pstmt = conn.prepareStatement(sql);
             pstmt.setString(1, account);
-            pstmt.setString(2, password);
             rs = pstmt.executeQuery();
-
+            
             if (rs.next()) {
-                String userId = rs.getString("user_id");
-                String userName = rs.getString("user_name");
-                String role = rs.getString("role");
-                String contact = rs.getString("contact");
-                String department = rs.getString("department");
-                Timestamp createTime = rs.getTimestamp("create_time");
-
-                user = new User(userId, userName, role);
-                user.setContact(contact);
-                user.setDepartment(department);
-                System.out.println("登录成功: " + user.toString());
+                // 获取数据库中存储的密码hash
+                String storedPasswordHash = rs.getString("password");
+                
+                // 验证密码
+                if (verifyPassword(password, storedPasswordHash)) {
+                    String userId = rs.getString("user_id");
+                    String userName = rs.getString("user_name");
+                    String role = rs.getString("role");
+                    String contact = rs.getString("contact");
+                    String department = rs.getString("department");
+                    Timestamp createTime = rs.getTimestamp("create_time");
+                    
+                    user = new User(userId, userName, role);
+                    user.setContact(contact);
+                    user.setDepartment(department);
+                    System.out.println("登录成功: " + user.toString());
+                }
             }
         } catch (SQLException e) {
             e.printStackTrace();
@@ -51,7 +63,47 @@ public class UserService {
         }
         return user;
     }
-
+/**
+ * 验证用户密码（通用方法，可以用于修改密码时的旧密码验证）
+ * @param userId 用户ID
+ * @param password 明文密码
+ * @return 密码是否正确
+ */
+public boolean validatePassword(String userId, String password) {
+    String sql = "SELECT password FROM user_info WHERE user_id = ?";
+    Connection conn = null;
+    PreparedStatement pstmt = null;
+    ResultSet rs = null;
+    
+    try {
+        conn = DBUtils.getConnection();
+        pstmt = conn.prepareStatement(sql);
+        pstmt.setString(1, userId);
+        rs = pstmt.executeQuery();
+        
+        if (rs.next()) {
+            // 获取数据库中存储的加密密码
+            String storedHash = rs.getString("password");
+            
+            // 将输入的密码加密后比较
+            String inputHash = encryptPassword(password);
+            
+            // 如果加密失败或者不匹配，返回false
+            if (inputHash == null) {
+                return false;
+            }
+            
+            // 安全地比较两个hash值
+            return inputHash.equals(storedHash);
+        }
+    } catch (SQLException e) {
+        System.err.println("验证密码失败: " + e.getMessage());
+        e.printStackTrace();
+    } finally {
+        DBUtils.close(conn, pstmt, rs);
+    }
+    return false;
+}
     /**
      * 获取所有学生
      */
@@ -79,30 +131,125 @@ public class UserService {
         return students;
     }
 
-    /**
-     * 添加学生
+     /**
+     * 密码加密方法（使用SHA-256）
+     */
+    private String encryptPassword(String password) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] hash = md.digest(password.getBytes());
+            
+            // 转换为十六进制字符串
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hash) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) {
+                    hexString.append('0');
+                }
+                hexString.append(hex);
+            }
+            return hexString.toString();
+            
+        } catch (NoSuchAlgorithmException e) {
+            System.err.println("密码加密失败: " + e.getMessage());
+            e.printStackTrace();
+            return null;
+        }
+    }
+        /**
+     * 添加学生（密码加密存储）
      */
     public boolean addStudent(User student, String account, String password) {
+        // 加密密码
+        String encryptedPassword = encryptPassword(password);
+        if (encryptedPassword == null) {
+            return false;
+        }
+        
         String sql = "INSERT INTO user_info (user_id, user_name, account, password, role, department) " +
                      "VALUES (?, ?, ?, ?, 'Student', ?)";
         Connection conn = null;
         PreparedStatement pstmt = null;
-
+        
         try {
             conn = DBUtils.getConnection();
             pstmt = conn.prepareStatement(sql);
             pstmt.setString(1, student.getUserId());
             pstmt.setString(2, student.getUserName());
             pstmt.setString(3, account);
-            pstmt.setString(4, password);
+            pstmt.setString(4, encryptedPassword);  // 使用加密后的密码
             pstmt.setString(5, student.getDepartment());
             return pstmt.executeUpdate() > 0;
         } catch (SQLException e) {
+            System.err.println("添加学生失败: " + e.getMessage());
             e.printStackTrace();
             return false;
         } finally {
             DBUtils.close(conn, pstmt, null);
         }
+    }
+        /**
+     * 修改学生密码（加密存储）
+     */
+    public boolean updateStudentPassword(String studentId, String newPassword) {
+        // 加密新密码
+        String encryptedPassword = encryptPassword(newPassword);
+        if (encryptedPassword == null) {
+            return false;
+        }
+        
+        String sql = "UPDATE user_info SET password = ? WHERE user_id = ? AND role = 'Student'";
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+        
+        try {
+            conn = DBUtils.getConnection();
+            pstmt = conn.prepareStatement(sql);
+            pstmt.setString(1, encryptedPassword);  // 使用加密后的密码
+            pstmt.setString(2, studentId);
+            return pstmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            System.err.println("修改学生密码失败: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        } finally {
+            DBUtils.close(conn, pstmt, null);
+        }
+    }
+            /**
+     * 修改管理员密码（加密存储）
+     */
+    public boolean updateAdminPassword(String adminId, String newPassword) {
+        // 加密新密码
+        String encryptedPassword = encryptPassword(newPassword);
+        if (encryptedPassword == null) {
+            return false;
+        }
+        
+        String sql = "UPDATE user_info SET password = ? WHERE user_id = ? AND role = 'EduAdmin'";
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+        
+        try {
+            conn = DBUtils.getConnection();
+            pstmt = conn.prepareStatement(sql);
+            pstmt.setString(1, encryptedPassword);  // 使用加密后的密码
+            pstmt.setString(2, adminId);
+            return pstmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            System.err.println("修改管理员密码失败: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        } finally {
+            DBUtils.close(conn, pstmt, null);
+        }
+    }
+    /**
+     * 验证密码（比较加密后的密码）
+     */
+    public boolean verifyPassword(String inputPassword, String storedHash) {
+        String inputHash = encryptPassword(inputPassword);
+        return inputHash != null && inputHash.equals(storedHash);
     }
 
     /**
@@ -130,6 +277,30 @@ public class UserService {
         }
     }
 
+    /**
+     * 更新教师信息
+     */
+    public boolean updateTeacher(User teacher) {
+        String sql = "UPDATE user_info SET " +
+                     "user_name = ?, department = ? " +
+                     "WHERE user_id = ? AND role = 'Teacher'";
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+
+        try {
+            conn = DBUtils.getConnection();
+            pstmt = conn.prepareStatement(sql);
+            pstmt.setString(1, teacher.getUserName());
+            pstmt.setString(2, teacher.getDepartment());
+            pstmt.setString(3, teacher.getUserId());
+            return pstmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        } finally {
+            DBUtils.close(conn, pstmt, null);
+        }
+    }
     /**
      * 删除学生
      */
@@ -200,27 +371,6 @@ public class UserService {
         }
     }
 
-    /**
-     * 修改学生密码
-     */
-    public boolean updateStudentPassword(String studentId, String newPassword) {
-        String sql = "UPDATE user_info SET password = SHA2(?, 256) WHERE user_id = ? AND role = 'Student'";
-        Connection conn = null;
-        PreparedStatement pstmt = null;
-
-        try {
-            conn = DBUtils.getConnection();
-            pstmt = conn.prepareStatement(sql);
-            pstmt.setString(1, newPassword);
-            pstmt.setString(2, studentId);
-            return pstmt.executeUpdate() > 0;
-        } catch (SQLException e) {
-            e.printStackTrace();
-            return false;
-        } finally {
-            DBUtils.close(conn, pstmt, null);
-        }
-    }
 
     /**
      * 获取所有教师
@@ -255,59 +405,66 @@ public class UserService {
         return teachers;
     }
 
-    /**
-     * 添加教师
-     */
-    public boolean addTeacher(User teacher, String account, String password) {
-        String sql = "INSERT INTO user_info (user_id, user_name, account, password, role, department, contact) " +
-                     "VALUES (?, ?, ?, ?, 'Teacher', ?, ?)";
+/**
+ * 添加教师（密码加密存储）
+ */
+public boolean addTeacher(User teacher, String account, String password) {
+    // 加密密码
+    String encryptedPassword = encryptPassword(password);
+    if (encryptedPassword == null) {
+        return false;
+    }
+    
+    String sql = "INSERT INTO user_info (user_id, user_name, account, password, role, department, contact) " +
+                 "VALUES (?, ?, ?, ?, 'Teacher', ?, ?)";
+    Connection conn = null;
+    PreparedStatement pstmt = null;
+    
+    try {
+        conn = DBUtils.getConnection();
+        pstmt = conn.prepareStatement(sql);
+        pstmt.setString(1, teacher.getUserId());
+        pstmt.setString(2, teacher.getUserName());
+        pstmt.setString(3, account);
+        pstmt.setString(4, encryptedPassword);  // 使用加密后的密码
+        pstmt.setString(5, teacher.getDepartment());
+        pstmt.setString(6, teacher.getContact());
+        return pstmt.executeUpdate() > 0;
+    } catch (SQLException e) {
+        e.printStackTrace();
+        return false;
+    } finally {
+        DBUtils.close(conn, pstmt, null);
+    }
+}
+/**
+ * 修改教师密码（加密存储）
+ */
+    public boolean updateTeacherPassword(String teacherId, String newPassword) {
+        // 加密新密码
+        String encryptedPassword = encryptPassword(newPassword);
+        if (encryptedPassword == null) {
+            return false;
+        }
+        
+        String sql = "UPDATE user_info SET password = ? WHERE user_id = ? AND role = 'Teacher'";
         Connection conn = null;
         PreparedStatement pstmt = null;
-
+        
         try {
             conn = DBUtils.getConnection();
             pstmt = conn.prepareStatement(sql);
-            pstmt.setString(1, teacher.getUserId());
-            pstmt.setString(2, teacher.getUserName());
-            pstmt.setString(3, account);
-            pstmt.setString(4, password);
-            pstmt.setString(5, teacher.getDepartment());
-            pstmt.setString(6, teacher.getContact());
+            pstmt.setString(1, encryptedPassword);  // 使用加密后的密码
+            pstmt.setString(2, teacherId);
             return pstmt.executeUpdate() > 0;
         } catch (SQLException e) {
+            System.err.println("修改教师密码失败: " + e.getMessage());
             e.printStackTrace();
             return false;
         } finally {
             DBUtils.close(conn, pstmt, null);
         }
     }
-
-    /**
-     * 更新教师信息
-     */
-    public boolean updateTeacher(User teacher) {
-        String sql = "UPDATE user_info SET " +
-                     "user_name = ?, department = ?, contact = ? " +
-                     "WHERE user_id = ? AND role = 'Teacher'";
-        Connection conn = null;
-        PreparedStatement pstmt = null;
-
-        try {
-            conn = DBUtils.getConnection();
-            pstmt = conn.prepareStatement(sql);
-            pstmt.setString(1, teacher.getUserName());
-            pstmt.setString(2, teacher.getDepartment());
-            pstmt.setString(3, teacher.getContact());
-            pstmt.setString(4, teacher.getUserId());
-            return pstmt.executeUpdate() > 0;
-        } catch (SQLException e) {
-            e.printStackTrace();
-            return false;
-        } finally {
-            DBUtils.close(conn, pstmt, null);
-        }
-    }
-
     /**
      * 删除教师
      */

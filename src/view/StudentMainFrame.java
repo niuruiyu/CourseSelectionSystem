@@ -3,20 +3,22 @@ package view;
 import model.User;
 import model.Course;
 import service.CourseService;
+import service.UserService;
 import util.LogUtil;
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.util.List;
 import java.util.ArrayList;
-import java.util.Map;
-import java.util.HashMap;
 
 public class StudentMainFrame extends JFrame {
 
     // 依赖项
     private final CourseService courseService = new CourseService();
+    private final UserService userService = new UserService();
     private final User student; // 当前登录的学生对象
 
     // 主界面组件
@@ -61,6 +63,9 @@ public class StudentMainFrame extends JFrame {
 
         setLayout(new BorderLayout());
 
+        // 创建菜单栏
+        createMenuBar();
+        
         // 创建标签页
         tabbedPane = new JTabbedPane();
         
@@ -78,6 +83,160 @@ public class StudentMainFrame extends JFrame {
         // 初始加载数据
         loadAllCourseData();
         setVisible(true);
+    }
+    
+    /**
+     * 创建菜单栏
+     */
+    private void createMenuBar() {
+        JMenuBar menuBar = new JMenuBar();
+        
+        // 帮助菜单
+        JMenu helpMenu = new JMenu("帮助");
+        
+        JMenuItem changePwdItem = new JMenuItem("修改密码");
+        JMenuItem logoutItem = new JMenuItem("退出登录");
+        
+        changePwdItem.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                showChangePasswordDialog();
+            }
+        });
+        
+        logoutItem.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                handleLogout();
+            }
+        });
+        
+        helpMenu.add(changePwdItem);
+        helpMenu.addSeparator();
+        helpMenu.add(logoutItem);
+        
+        menuBar.add(helpMenu);
+
+        
+        setJMenuBar(menuBar);
+    }
+    
+/**
+ * 显示修改密码对话框
+ */
+private void showChangePasswordDialog() {
+    JPanel panel = new JPanel(new GridLayout(4, 2, 10, 10));
+    panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+    
+    JPasswordField oldPwdField = new JPasswordField(15);
+    JPasswordField newPwdField = new JPasswordField(15);
+    JPasswordField confirmPwdField = new JPasswordField(15);
+    
+    panel.add(new JLabel("当前密码:"));
+    panel.add(oldPwdField);
+    panel.add(new JLabel("新密码:"));
+    panel.add(newPwdField);
+    panel.add(new JLabel("确认新密码:"));
+    panel.add(confirmPwdField);
+    panel.add(new JLabel(""));
+    panel.add(new JLabel("（密码长度至少6位）"));
+    
+    int result = JOptionPane.showConfirmDialog(this, panel, "修改密码", JOptionPane.OK_CANCEL_OPTION);
+    if (result == JOptionPane.OK_OPTION) {
+        String oldPassword = new String(oldPwdField.getPassword());
+        String newPassword = new String(newPwdField.getPassword());
+        String confirmPassword = new String(confirmPwdField.getPassword());
+        
+        // 验证输入
+        if (oldPassword.isEmpty() || newPassword.isEmpty() || confirmPassword.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "所有字段都不能为空", "输入错误", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        
+        if (!newPassword.equals(confirmPassword)) {
+            JOptionPane.showMessageDialog(this, "两次输入的新密码不一致", "输入错误", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        
+        if (newPassword.length() < 6) {
+            JOptionPane.showMessageDialog(this, "新密码长度至少6位", "输入错误", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        
+        if (oldPassword.equals(newPassword)) {
+            JOptionPane.showMessageDialog(this, "新密码不能与旧密码相同", "输入错误", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        
+        // 【关键修改】使用新的validatePassword方法验证旧密码
+        boolean oldPasswordCorrect = userService.validatePassword(student.getUserId(), oldPassword);
+        
+        if (!oldPasswordCorrect) {
+            JOptionPane.showMessageDialog(this, "当前密码错误", "验证失败", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        
+        // 更新密码
+        boolean success = userService.updateStudentPassword(student.getUserId(), newPassword);
+        
+        if (success) {
+            // 记录日志
+            LogUtil.log(student.getUserId(), "修改密码", 
+                       "学生 " + student.getUserName() + " 修改密码成功");
+            
+            JOptionPane.showMessageDialog(this, 
+                "密码修改成功！\n" +
+                "请记住新密码，下次登录时使用。",
+                "修改成功", JOptionPane.INFORMATION_MESSAGE);
+        } else {
+            LogUtil.log(student.getUserId(), "修改密码失败", 
+                       "学生 " + student.getUserName() + " 修改密码失败");
+            
+            JOptionPane.showMessageDialog(this, 
+                "密码修改失败，请稍后重试",
+                "修改失败", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+}
+    /**
+     * 退出登录
+     */
+    private void handleLogout() {
+        int confirm = JOptionPane.showConfirmDialog(this,
+            "确定要退出登录吗？",
+            "确认退出", JOptionPane.YES_NO_OPTION);
+        
+        if (confirm == JOptionPane.YES_OPTION) {
+            // 记录登出日志
+            LogUtil.logLogout(student.getUserId(), student.getUserName());
+            
+            // 关闭当前窗口
+            this.dispose();
+            
+            // 重新打开登录窗口
+            EventQueue.invokeLater(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        new LoginFrame();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+            });
+        }
+    }
+    
+    /**
+     * 显示关于对话框
+     */
+    private void showAboutDialog() {
+        JOptionPane.showMessageDialog(this,
+            "选课系统 v1.0\n" +
+            "开发团队：计算机学院\n" +
+            "联系方式：support@example.com\n" +
+            "版权所有 © 2024",
+            "关于系统", JOptionPane.INFORMATION_MESSAGE);
     }
 
     // ===================================
@@ -123,10 +282,19 @@ public class StudentMainFrame extends JFrame {
         JButton selectBtn = new JButton("选课");
         JButton refreshBtn = new JButton("刷新");
         
-        selectBtn.addActionListener(e -> handleSelectCourse());
-        refreshBtn.addActionListener(e -> {
-            loadAllCourseData();
-            displayCourses(allCourses);
+        selectBtn.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                handleSelectCourse();
+            }
+        });
+        
+        refreshBtn.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                loadAllCourseData();
+                displayCourses(allCourses);
+            }
         });
         
         buttonPanel.add(selectBtn);
@@ -166,8 +334,20 @@ public class StudentMainFrame extends JFrame {
         // 按钮
         JButton searchBtn = new JButton("搜索");
         JButton resetBtn = new JButton("重置");
-        searchBtn.addActionListener(e -> handleSearch());
-        resetBtn.addActionListener(e -> handleReset());
+        
+        searchBtn.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                handleSearch();
+            }
+        });
+        
+        resetBtn.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                handleReset();
+            }
+        });
         
         panel.add(searchBtn);
         panel.add(resetBtn);
@@ -390,9 +570,10 @@ public class StudentMainFrame extends JFrame {
         // 记录日志
         LogUtil.log(student.getUserId(), "刷新数据", "刷新所有页面数据");
     }
+    
     /**
- * 刷新课表面板数据
- */
+     * 刷新课表面板数据
+     */
     private void refreshSchedulePanel() {
         // 获取当前选中的标签页索引
         int currentTab = tabbedPane.getSelectedIndex();
@@ -419,9 +600,9 @@ public class StudentMainFrame extends JFrame {
         tabbedPane.setSelectedIndex(currentTab);
     }
 
-/**
- * 退课成功后也要刷新所有数据
- */
+    /**
+     * 退课成功后也要刷新所有数据
+     */
     private void handleDropCourse() {
         int selectedRow = selectedCourseTable.getSelectedRow();
         if (selectedRow == -1) {
@@ -530,216 +711,189 @@ public class StudentMainFrame extends JFrame {
         return card;
     }
 
-/**
- * 创建基于实际课程时间的课表面板
- */
-private JPanel createWeeklySchedulePanel() {
-    JPanel panel = new JPanel(new BorderLayout());
-    panel.setBorder(BorderFactory.createTitledBorder("本周课表（时间网格视图）"));
-    
-    // 获取学生已选课程
-    List<Course> selectedCourses = courseService.getStudentSelectedCourses(student.getUserId());
-    
-    // 创建课表网格 - 7行6列（6个时间段）
-    JPanel gridPanel = new JPanel(new GridLayout(7, 6, 1, 1));
-    gridPanel.setBorder(BorderFactory.createLineBorder(Color.GRAY));
-    
-    // 表头行
-    String[] timeSlots = {"时间", "周一", "周二", "周三", "周四", "周五"};
-    String[] periods = {
-        "1-2节\n8:00-10:00", 
-        "3-4节\n10:10-12:10", 
-        "午休", 
-        "5-6节\n14:00-16:00", 
-        "7-8节\n16:10-18:10", 
-        "9-10节\n19:00-21:00"
-    };
-    
-    // 添加表头
-    for (int i = 0; i < 6; i++) {
-        JLabel header = new JLabel(timeSlots[i], SwingConstants.CENTER);
-        header.setBorder(BorderFactory.createLineBorder(Color.GRAY));
-        header.setBackground(Color.LIGHT_GRAY);
-        header.setOpaque(true);
-        gridPanel.add(header);
-    }
-    
-    // 初始化课表数据
-    String[][] scheduleGrid = new String[6][5]; // 6个时间段 × 5天
-    
-    // 填充课表数据
-    for (Course course : selectedCourses) {
-        int[] timeInfo = parseScheduleTime(course.getScheduleTime());
-        int day = timeInfo[0];      // 星期几 (0-4)
-        int period = timeInfo[1];   // 时间段 (0-5)
+    /**
+     * 创建基于实际课程时间的课表面板
+     */
+    private JPanel createWeeklySchedulePanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("本周课表（时间网格视图）"));
         
-        if (day >= 0 && day < 5 && period >= 0 && period < 6) {
-            String courseName = course.getCourseName();
-            if (courseName.length() > 4) {
-                courseName = courseName.substring(0, Math.min(4, courseName.length()));
-            }
-            scheduleGrid[period][day] = courseName;
-        }
-    }
-    
-    // 创建课表格子
-    for (int period = 0; period < 6; period++) {
-        // 时间标签
-        JLabel timeLabel = new JLabel("<html><center>" + periods[period].replace("\n", "<br>") + "</center></html>", SwingConstants.CENTER);
-        timeLabel.setBorder(BorderFactory.createLineBorder(Color.GRAY));
-        timeLabel.setBackground(Color.decode("#F5F5F5"));
-        timeLabel.setOpaque(true);
-        gridPanel.add(timeLabel);
+        // 获取学生已选课程
+        List<Course> selectedCourses = courseService.getStudentSelectedCourses(student.getUserId());
         
-        // 周一到周五的课程格子
-        for (int day = 0; day < 5; day++) {
-            JLabel cell = new JLabel("", SwingConstants.CENTER);
-            cell.setBorder(BorderFactory.createLineBorder(Color.GRAY));
-            cell.setOpaque(true);
-            
-            String courseName = scheduleGrid[period][day];
-            if (courseName != null && !courseName.isEmpty()) {
-                cell.setText("<html><center>" + courseName + "</center></html>");
-                cell.setBackground(Color.decode("#C8E6C9")); // 浅绿色表示有课
-                cell.setForeground(Color.DARK_GRAY);
-                cell.setToolTipText("点击查看详情");
-            } else if (period == 2) { // 午休
-                cell.setText("午休");
-                cell.setBackground(Color.decode("#FFF3E0"));
-            } else {
-                cell.setBackground(Color.WHITE);
-            }
-            
-            gridPanel.add(cell);
+        // 创建课表网格 - 7行6列（6个时间段）
+        JPanel gridPanel = new JPanel(new GridLayout(7, 6, 1, 1));
+        gridPanel.setBorder(BorderFactory.createLineBorder(Color.GRAY));
+        
+        // 表头行
+        String[] timeSlots = {"时间", "周一", "周二", "周三", "周四", "周五"};
+        String[] periods = {
+            "1-2节\n8:00-10:00", 
+            "3-4节\n10:10-12:10", 
+            "午休", 
+            "5-6节\n14:00-16:00", 
+            "7-8节\n16:10-18:10", 
+            "9-10节\n19:00-21:00"
+        };
+        
+        // 添加表头
+        for (int i = 0; i < 6; i++) {
+            JLabel header = new JLabel(timeSlots[i], SwingConstants.CENTER);
+            header.setBorder(BorderFactory.createLineBorder(Color.GRAY));
+            header.setBackground(Color.LIGHT_GRAY);
+            header.setOpaque(true);
+            gridPanel.add(header);
         }
+        
+        // 初始化课表数据
+        String[][] scheduleGrid = new String[6][5]; // 6个时间段 × 5天
+        
+        // 填充课表数据
+        for (Course course : selectedCourses) {
+            int[] timeInfo = parseScheduleTime(course.getScheduleTime());
+            int day = timeInfo[0];      // 星期几 (0-4)
+            int period = timeInfo[1];   // 时间段 (0-5)
+            
+            if (day >= 0 && day < 5 && period >= 0 && period < 6) {
+                String courseName = course.getCourseName();
+                if (courseName.length() > 4) {
+                    courseName = courseName.substring(0, Math.min(4, courseName.length()));
+                }
+                scheduleGrid[period][day] = courseName;
+            }
+        }
+        
+        // 创建课表格子
+        for (int period = 0; period < 6; period++) {
+            // 时间标签
+            JLabel timeLabel = new JLabel("<html><center>" + periods[period].replace("\n", "<br>") + "</center></html>", SwingConstants.CENTER);
+            timeLabel.setBorder(BorderFactory.createLineBorder(Color.GRAY));
+            timeLabel.setBackground(Color.decode("#F5F5F5"));
+            timeLabel.setOpaque(true);
+            gridPanel.add(timeLabel);
+            
+            // 周一到周五的课程格子
+            for (int day = 0; day < 5; day++) {
+                JLabel cell = new JLabel("", SwingConstants.CENTER);
+                cell.setBorder(BorderFactory.createLineBorder(Color.GRAY));
+                cell.setOpaque(true);
+                
+                String courseName = scheduleGrid[period][day];
+                if (courseName != null && !courseName.isEmpty()) {
+                    cell.setText("<html><center>" + courseName + "</center></html>");
+                    cell.setBackground(Color.decode("#C8E6C9")); // 浅绿色表示有课
+                    cell.setForeground(Color.DARK_GRAY);
+                    cell.setToolTipText("点击查看详情");
+                } else if (period == 2) { // 午休
+                    cell.setText("午休");
+                    cell.setBackground(Color.decode("#FFF3E0"));
+                } else {
+                    cell.setBackground(Color.WHITE);
+                }
+                
+                gridPanel.add(cell);
+            }
+        }
+        
+        panel.add(gridPanel, BorderLayout.CENTER);
+        
+        // 添加统计信息
+        JPanel infoPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        infoPanel.add(new JLabel("已选课程: " + selectedCourses.size() + "门"));
+        infoPanel.add(new JLabel(" | 课表显示: " + countCoursesOnSchedule(scheduleGrid) + "门"));
+        panel.add(infoPanel, BorderLayout.SOUTH);
+        
+        return panel;
     }
     
-    panel.add(gridPanel, BorderLayout.CENTER);
-    
-    // 添加统计信息
-    JPanel infoPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-    infoPanel.add(new JLabel("已选课程: " + selectedCourses.size() + "门"));
-    infoPanel.add(new JLabel(" | 课表显示: " + countCoursesOnSchedule(scheduleGrid) + "门"));
-    panel.add(infoPanel, BorderLayout.SOUTH);
-    
-    return panel;
-}
-/**
- * 解析课程时间字符串，返回星期和时间段
- * 格式示例："周一1-2节"、"周二3-4节"、"周三5-6节"、"周四7-8节"、"周五9-10节"
- * 
- * @param scheduleTime 课程时间字符串
- * @return int[2] 数组，[0]=星期几(0-4)，[1]=时间段(0-5)
- */
-private int[] parseScheduleTime(String scheduleTime) {
-    // 默认值：不在课表上显示（-1表示无效）
-    int[] result = new int[]{-1, -1};
-    
-    if (scheduleTime == null || scheduleTime.trim().isEmpty()) {
+    /**
+     * 解析课程时间字符串，返回星期和时间段
+     * 格式示例："周一1-2节"、"周二3-4节"、"周三5-6节"、"周四7-8节"、"周五9-10节"
+     * 
+     * @param scheduleTime 课程时间字符串
+     * @return int[2] 数组，[0]=星期几(0-4)，[1]=时间段(0-5)
+     */
+    private int[] parseScheduleTime(String scheduleTime) {
+        // 默认值：不在课表上显示（-1表示无效）
+        int[] result = new int[]{-1, -1};
+        
+        if (scheduleTime == null || scheduleTime.trim().isEmpty()) {
+            return result;
+        }
+        
+        try {
+            String timeStr = scheduleTime.trim();
+            
+            // 1. 提取星期几
+            if (timeStr.contains("周一")) {
+                result[0] = 0; // 周一
+            } else if (timeStr.contains("周二")) {
+                result[0] = 1; // 周二
+            } else if (timeStr.contains("周三")) {
+                result[0] = 2; // 周三
+            } else if (timeStr.contains("周四")) {
+                result[0] = 3; // 周四
+            } else if (timeStr.contains("周五")) {
+                result[0] = 4; // 周五
+            } else if (timeStr.contains("周六")) {
+                result[0] = 5; // 周六
+            } else if (timeStr.contains("周日")) {
+                result[0] = 6; // 周日
+            }
+            
+            // 2. 提取时间段（节次）
+            if (timeStr.contains("1-2节") || timeStr.contains("1、2节") || timeStr.contains("1,2节")) {
+                result[1] = 0; // 第1-2节（8:00-10:00）
+            } else if (timeStr.contains("3-4节") || timeStr.contains("3、4节") || timeStr.contains("3,4节")) {
+                result[1] = 1; // 第3-4节（10:10-12:10）
+            } else if (timeStr.contains("5-6节") || timeStr.contains("5、6节") || timeStr.contains("5,6节")) {
+                result[1] = 3; // 第5-6节（14:00-16:00）（注意：索引3对应午休之后）
+            } else if (timeStr.contains("7-8节") || timeStr.contains("7、8节") || timeStr.contains("7,8节")) {
+                result[1] = 4; // 第7-8节（16:10-18:10）
+            } else if (timeStr.contains("9-10节") || timeStr.contains("9、10节") || timeStr.contains("9,10节")) {
+                result[1] = 5; // 第9-10节（19:00-21:00）
+            } else if (timeStr.contains("11-12节")) {
+                result[1] = 6; // 第11-12节（如果有的话）
+            }
+            
+            // 3. 处理其他格式（如果上面的没匹配到）
+            if (result[1] == -1) {
+                // 尝试匹配 "1-2" 这样的格式（不带"节"字）
+                if (timeStr.contains("1-2") || timeStr.matches(".*1\\s*[-~]\\s*2.*")) {
+                    result[1] = 0;
+                } else if (timeStr.contains("3-4") || timeStr.matches(".*3\\s*[-~]\\s*4.*")) {
+                    result[1] = 1;
+                } else if (timeStr.contains("5-6") || timeStr.matches(".*5\\s*[-~]\\s*6.*")) {
+                    result[1] = 3;
+                } else if (timeStr.contains("7-8") || timeStr.matches(".*7\\s*[-~]\\s*8.*")) {
+                    result[1] = 4;
+                } else if (timeStr.contains("9-10") || timeStr.matches(".*9\\s*[-~]\\s*10.*")) {
+                    result[1] = 5;
+                }
+            }
+            
+        } catch (Exception e) {
+            System.err.println("解析课程时间失败 [" + scheduleTime + "]: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
         return result;
     }
     
-    try {
-        String timeStr = scheduleTime.trim();
-        
-        // 1. 提取星期几
-        if (timeStr.contains("周一")) {
-            result[0] = 0; // 周一
-        } else if (timeStr.contains("周二")) {
-            result[0] = 1; // 周二
-        } else if (timeStr.contains("周三")) {
-            result[0] = 2; // 周三
-        } else if (timeStr.contains("周四")) {
-            result[0] = 3; // 周四
-        } else if (timeStr.contains("周五")) {
-            result[0] = 4; // 周五
-        } else if (timeStr.contains("周六")) {
-            result[0] = 5; // 周六
-        } else if (timeStr.contains("周日")) {
-            result[0] = 6; // 周日
-        }
-        
-        // 2. 提取时间段（节次）
-        if (timeStr.contains("1-2节") || timeStr.contains("1、2节") || timeStr.contains("1,2节")) {
-            result[1] = 0; // 第1-2节（8:00-10:00）
-        } else if (timeStr.contains("3-4节") || timeStr.contains("3、4节") || timeStr.contains("3,4节")) {
-            result[1] = 1; // 第3-4节（10:10-12:10）
-        } else if (timeStr.contains("5-6节") || timeStr.contains("5、6节") || timeStr.contains("5,6节")) {
-            result[1] = 3; // 第5-6节（14:00-16:00）（注意：索引3对应午休之后）
-        } else if (timeStr.contains("7-8节") || timeStr.contains("7、8节") || timeStr.contains("7,8节")) {
-            result[1] = 4; // 第7-8节（16:10-18:10）
-        } else if (timeStr.contains("9-10节") || timeStr.contains("9、10节") || timeStr.contains("9,10节")) {
-            result[1] = 5; // 第9-10节（19:00-21:00）
-        } else if (timeStr.contains("11-12节")) {
-            result[1] = 6; // 第11-12节（如果有的话）
-        }
-        
-        // 3. 处理其他格式（如果上面的没匹配到）
-        if (result[1] == -1) {
-            // 尝试匹配 "1-2" 这样的格式（不带"节"字）
-            if (timeStr.contains("1-2") || timeStr.matches(".*1\\s*[-~]\\s*2.*")) {
-                result[1] = 0;
-            } else if (timeStr.contains("3-4") || timeStr.matches(".*3\\s*[-~]\\s*4.*")) {
-                result[1] = 1;
-            } else if (timeStr.contains("5-6") || timeStr.matches(".*5\\s*[-~]\\s*6.*")) {
-                result[1] = 3;
-            } else if (timeStr.contains("7-8") || timeStr.matches(".*7\\s*[-~]\\s*8.*")) {
-                result[1] = 4;
-            } else if (timeStr.contains("9-10") || timeStr.matches(".*9\\s*[-~]\\s*10.*")) {
-                result[1] = 5;
+    /**
+     * 计算课表上显示的课程数量
+     */
+    private int countCoursesOnSchedule(String[][] scheduleGrid) {
+        int count = 0;
+        for (int i = 0; i < 6; i++) {
+            for (int j = 0; j < 5; j++) {
+                if (scheduleGrid[i][j] != null && !scheduleGrid[i][j].isEmpty()) {
+                    count++;
+                }
             }
         }
-        
-    } catch (Exception e) {
-        System.err.println("解析课程时间失败 [" + scheduleTime + "]: " + e.getMessage());
-        e.printStackTrace();
+        return count;
     }
-    
-    return result;
-}
-/**
- * 查找指定时间段的课程（使用实际课程时间）
- */
-private String findCourseAt(List<Course> courses, int day, int period) {
-    for (Course course : courses) {
-        // 解析课程的schedule_time
-        int[] timeInfo = parseScheduleTime(course.getScheduleTime());
-        
-        // 调试输出（可选）
-        if (timeInfo[0] >= 0 && timeInfo[1] >= 0) {
-            System.out.println("课程解析: " + course.getCourseName() + 
-                             " -> 星期" + (timeInfo[0] + 1) + 
-                             " 第" + (timeInfo[1] < 2 ? timeInfo[1] + 1 : timeInfo[1] + 2) + "节");
-        }
-        
-        // 检查是否匹配指定的day和period
-        // 注意：午休占用了索引2，所以时间段索引需要调整
-        if (timeInfo[0] == day && timeInfo[1] == period) {
-            // 返回课程简称（避免单元格显示过长）
-            String courseName = course.getCourseName();
-            if (courseName.length() > 4) {
-                // 取前4个字
-                courseName = courseName.substring(0, Math.min(4, courseName.length()));
-            }
-            return courseName;
-        }
-    }
-    return "";
-}
-/**
- * 计算课表上显示的课程数量
- */
-private int countCoursesOnSchedule(String[][] scheduleGrid) {
-    int count = 0;
-    for (int i = 0; i < 6; i++) {
-        for (int j = 0; j < 5; j++) {
-            if (scheduleGrid[i][j] != null && !scheduleGrid[i][j].isEmpty()) {
-                count++;
-            }
-        }
-    }
-    return count;
-}
 
     /**
      * 创建图例项
@@ -791,8 +945,19 @@ private int countCoursesOnSchedule(String[][] scheduleGrid) {
         JButton dropBtn = new JButton("退选课程");
         JButton refreshBtn = new JButton("刷新列表");
         
-        dropBtn.addActionListener(e -> handleDropCourse());
-        refreshBtn.addActionListener(e -> loadSelectedCourses());
+        dropBtn.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                handleDropCourse();
+            }
+        });
+        
+        refreshBtn.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                loadSelectedCourses();
+            }
+        });
         
         buttonPanel.add(dropBtn);
         buttonPanel.add(refreshBtn);
@@ -828,5 +993,4 @@ private int countCoursesOnSchedule(String[][] scheduleGrid) {
             selectedCourseTableModel.addRow(new Object[]{"暂无已选课程", "", "", "", "", "", ""});
         }
     }
-
 }

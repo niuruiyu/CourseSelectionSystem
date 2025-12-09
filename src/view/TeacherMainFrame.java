@@ -3,15 +3,19 @@ package view;
 import model.User;
 import model.Course;
 import service.CourseService;
-import util.LogUtil;  // 导入日志工具类
+import service.UserService;
+import util.LogUtil;
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.util.List;
 
 public class TeacherMainFrame extends JFrame {
 
     private final CourseService courseService = new CourseService();
+    private final UserService userService = new UserService();
     private final User teacher;
     private JTabbedPane tabbedPane;
 
@@ -42,11 +46,159 @@ public class TeacherMainFrame extends JFrame {
 
         add(tabbedPane, BorderLayout.CENTER);
         setLocationRelativeTo(null); // 窗口居中
+        
+        // 创建菜单栏
+        createMenuBar();
+        
         setVisible(true);
     }
+    
+    /**
+     * 创建菜单栏
+     */
+    private void createMenuBar() {
+        JMenuBar menuBar = new JMenuBar();
+        
+        // 帮助菜单
+        JMenu helpMenu = new JMenu("帮助");
+        
+        JMenuItem changePwdItem = new JMenuItem("修改密码");
+        JMenuItem logoutItem = new JMenuItem("退出登录");
+        
+        changePwdItem.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                showChangePasswordDialog();
+            }
+        });
+        
+        logoutItem.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                handleLogout();
+            }
+        });
+        
+        helpMenu.add(changePwdItem);
+        helpMenu.addSeparator();
+        helpMenu.add(logoutItem);
+        
+        menuBar.add(helpMenu);
+        
+        setJMenuBar(menuBar);
+    }
+    
+/**
+ * 显示修改密码对话框
+ */
+private void showChangePasswordDialog() {
+    JPanel panel = new JPanel(new GridLayout(4, 2, 10, 10));
+    panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+    
+    JPasswordField oldPwdField = new JPasswordField(15);
+    JPasswordField newPwdField = new JPasswordField(15);
+    JPasswordField confirmPwdField = new JPasswordField(15);
+    
+    panel.add(new JLabel("当前密码:"));
+    panel.add(oldPwdField);
+    panel.add(new JLabel("新密码:"));
+    panel.add(newPwdField);
+    panel.add(new JLabel("确认新密码:"));
+    panel.add(confirmPwdField);
+    panel.add(new JLabel(""));
+    panel.add(new JLabel("（密码长度至少6位）"));
+    
+    int result = JOptionPane.showConfirmDialog(this, panel, "修改密码", JOptionPane.OK_CANCEL_OPTION);
+    if (result == JOptionPane.OK_OPTION) {
+        String oldPassword = new String(oldPwdField.getPassword());
+        String newPassword = new String(newPwdField.getPassword());
+        String confirmPassword = new String(confirmPwdField.getPassword());
+        
+        // 验证输入
+        if (oldPassword.isEmpty() || newPassword.isEmpty() || confirmPassword.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "所有字段都不能为空", "输入错误", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        
+        if (!newPassword.equals(confirmPassword)) {
+            JOptionPane.showMessageDialog(this, "两次输入的新密码不一致", "输入错误", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        
+        if (newPassword.length() < 6) {
+            JOptionPane.showMessageDialog(this, "新密码长度至少6位", "输入错误", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        
+        if (oldPassword.equals(newPassword)) {
+            JOptionPane.showMessageDialog(this, "新密码不能与旧密码相同", "输入错误", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        
+        // 【关键修改】使用新的validatePassword方法验证旧密码
+        boolean oldPasswordCorrect = userService.validatePassword(teacher.getUserId(), oldPassword);
+        
+        if (!oldPasswordCorrect) {
+            JOptionPane.showMessageDialog(this, "当前密码错误", "验证失败", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        
+        // 更新密码 - 需要先在UserService中添加updateTeacherPassword方法
+        boolean success = userService.updateTeacherPassword(teacher.getUserId(), newPassword);
+        
+        if (success) {
+            // 记录日志
+            LogUtil.log(teacher.getUserId(), "修改密码", 
+                       "教师 " + teacher.getUserName() + " 修改密码成功");
+            
+            JOptionPane.showMessageDialog(this, 
+                "密码修改成功！\n" +
+                "请记住新密码，下次登录时使用。",
+                "修改成功", JOptionPane.INFORMATION_MESSAGE);
+        } else {
+            LogUtil.log(teacher.getUserId(), "修改密码失败", 
+                       "教师 " + teacher.getUserName() + " 修改密码失败");
+            
+            JOptionPane.showMessageDialog(this, 
+                "密码修改失败，请稍后重试",
+                "修改失败", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+}
+    
+    /**
+     * 退出登录
+     */
+    private void handleLogout() {
+        int confirm = JOptionPane.showConfirmDialog(this,
+            "确定要退出登录吗？",
+            "确认退出", JOptionPane.YES_NO_OPTION);
+        
+        if (confirm == JOptionPane.YES_OPTION) {
+            // 记录登出日志
+            LogUtil.logLogout(teacher.getUserId(), teacher.getUserName());
+            
+            // 关闭当前窗口
+            this.dispose();
+            
+            // 重新打开登录窗口
+            EventQueue.invokeLater(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        new LoginFrame();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+            });
+        }
+    }
+    
+
 
     // ===================================
-    // 1. “我的课程” 面板实现
+    // 1. "我的课程" 面板实现
     // ===================================
     private JPanel createMyCoursesPanel() {
         JPanel panel = new JPanel(new BorderLayout());
@@ -62,8 +214,19 @@ public class TeacherMainFrame extends JFrame {
         JButton refreshButton = new JButton("刷新课程列表");
         JButton viewStudentButton = new JButton("查看选课学生名单");
 
-        refreshButton.addActionListener(e -> loadMyCoursesData());
-        viewStudentButton.addActionListener(e -> handleViewStudents());
+        refreshButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                loadMyCoursesData();
+            }
+        });
+        
+        viewStudentButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                handleViewStudents();
+            }
+        });
 
         JPanel bottomPanel = new JPanel();
         bottomPanel.add(refreshButton);
@@ -138,7 +301,7 @@ public class TeacherMainFrame extends JFrame {
     }
 
     // ===================================
-    // 2. “开设新课程” 面板实现
+    // 2. "开设新课程" 面板实现
     // ===================================
     private JPanel createNewCoursePanel() {
         JPanel panel = new JPanel(new GridBagLayout());
@@ -179,9 +342,15 @@ public class TeacherMainFrame extends JFrame {
         panel.add(submitButton, gbc);
 
         // 提交按钮事件处理
-        submitButton.addActionListener(e -> handleSubmitApplication(
-                codeField, nameField, creditField, hourField, timeField, classroomField, limitField, typeField, descArea
-        ));
+        submitButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                handleSubmitApplication(
+                    codeField, nameField, creditField, hourField, timeField, 
+                    classroomField, limitField, typeField, descArea
+                );
+            }
+        });
 
         return panel;
     }
@@ -274,11 +443,4 @@ public class TeacherMainFrame extends JFrame {
             JOptionPane.showMessageDialog(this, "发生未知错误：" + ex.getMessage(), "系统错误", JOptionPane.ERROR_MESSAGE);
         }
     }
-
-    /* public static void main(String[] args) {
-        // 示例测试，假设登录用户是教师 T001
-        User testTeacher = new User("T001", "王老师", "Teacher");
-        new TeacherMainFrame(testTeacher);
-    }
-    */
 }
