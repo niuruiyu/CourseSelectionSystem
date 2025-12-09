@@ -3,7 +3,7 @@ package view;
 import model.User;
 import model.Course;
 import service.CourseService;
-
+import util.LogUtil;  // 导入日志工具类
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
@@ -11,9 +11,6 @@ import java.util.List;
 
 public class TeacherMainFrame extends JFrame {
 
-    // ===================================
-    // 依赖项与常量
-    // ===================================
     private final CourseService courseService = new CourseService();
     private final User teacher;
     private JTabbedPane tabbedPane;
@@ -32,6 +29,10 @@ public class TeacherMainFrame extends JFrame {
         setTitle("选课系统 - 教师端 - 欢迎：" + teacher.getUserName() + " (工号: " + teacher.getUserId() + ")");
         setSize(900, 650);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+
+        //  【添加日志】教师进入系统
+        LogUtil.log(teacher.getUserId(), "进入教师系统", 
+                   "教师 " + teacher.getUserName() + "(" + teacher.getUserId() + ") 进入教师主界面");
 
         tabbedPane = new JTabbedPane();
 
@@ -82,27 +83,29 @@ public class TeacherMainFrame extends JFrame {
         myCourseTableModel.setRowCount(0);
 
         // 调用服务层方法获取数据
-        // 注意：CourseService.getCoursesByTeacher() 需返回包含 status, classroom 等完整信息的 Course 列表
         List<Course> courses = courseService.getCoursesByTeacher(teacher.getUserId());
+
+        //  【添加日志】查看课程列表
+        LogUtil.log(teacher.getUserId(), "查看我的课程", 
+                   "教师 " + teacher.getUserName() + " 查看自己的课程列表，共 " + courses.size() + " 门课程");
 
         for (Course course : courses) {
             Object[] rowData = new Object[] {
                     course.getCourseCode(),
                     course.getCourseName(),
                     course.getCredit(),
-                    course.getStatus(), // 假设 Course.java 中已添加 getStatus()
+                    course.getStatus(),
                     course.getCapacityLimit(),
                     course.getCurrentSelected(),
                     course.getScheduleTime(),
-                    course.getClassroom() // 假设 Course.java 中已添加 getClassroom()
+                    course.getClassroom()
             };
             myCourseTableModel.addRow(rowData);
         }
     }
 
     /**
-     * 处理 “查看选课学生名单” 按钮事件
-     * TODO: 这需要一个新的服务方法和新的弹窗界面
+     * 处理 "查看选课学生名单" 按钮事件
      */
     private void handleViewStudents() {
         int selectedRow = myCourseTable.getSelectedRow();
@@ -115,10 +118,23 @@ public class TeacherMainFrame extends JFrame {
         String courseCode = (String) myCourseTable.getValueAt(selectedRow, 0);
         String courseName = (String) myCourseTable.getValueAt(selectedRow, 1);
 
-        // 实际应用中，这里应该弹出一个新窗口，显示该课程的选课学生列表
-        JOptionPane.showMessageDialog(this,
-                "功能开发中：即将弹出窗口显示课程《" + courseName + "》的选课学生名单。",
-                "提示", JOptionPane.INFORMATION_MESSAGE);
+        // 检查课程状态，只有已发布的课程才能查看学生名单
+        String status = (String) myCourseTable.getValueAt(selectedRow, 3);
+        if (!"Published".equals(status) && !"发布".equals(status)) {
+            JOptionPane.showMessageDialog(this,
+                "课程《" + courseName + "》还未发布，暂无选课学生。\n" +
+                "当前状态: " + status,
+                "提示", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        // 【添加日志】查看学生名单
+        LogUtil.log(teacher.getUserId(), "查看学生名单", 
+                "教师 " + teacher.getUserName() + " 查看课程 " + 
+                courseName + "(" + courseCode + ") 的选课学生");
+
+        // 弹出新的窗口显示学生名单
+        new CourseStudentsFrame(courseCode, courseName, teacher.getUserId());
     }
 
     // ===================================
@@ -218,20 +234,43 @@ public class TeacherMainFrame extends JFrame {
             // 4. 调用服务层提交申请
             boolean success = courseService.applyForNewCourse(newCourse, teacher.getUserId());
 
+            //  【添加日志】开课申请
+            String courseCode = codeField.getText();
+            String courseName = nameField.getText();
+            
             if (success) {
+                LogUtil.log(teacher.getUserId(), "开课申请提交", 
+                           "教师 " + teacher.getUserName() + " 申请开设课程：" + 
+                           courseName + "(" + courseCode + ")，学分：" + credit + "，容量：" + capacity + "，课时：" + hour);
+                
                 JOptionPane.showMessageDialog(this, "课程申请提交成功！请等待教务员审核。", "成功", JOptionPane.INFORMATION_MESSAGE);
+                
                 // 成功后清空表单
-                codeField.setText(""); nameField.setText(""); creditField.setText(""); hourField.setText("");
-                timeField.setText(""); classroomField.setText(""); limitField.setText(""); typeField.setText("");
+                codeField.setText(""); 
+                nameField.setText(""); 
+                creditField.setText(""); 
+                hourField.setText("");
+                timeField.setText(""); 
+                classroomField.setText(""); 
+                limitField.setText(""); 
+                typeField.setText("");
                 descArea.setText("");
 
-                // 切换到“我的课程”面板查看状态
+                // 切换到"我的课程"面板查看状态
                 tabbedPane.setSelectedIndex(0);
                 loadMyCoursesData();
             } else {
+                LogUtil.log(teacher.getUserId(), "开课申请失败", 
+                           "教师 " + teacher.getUserName() + " 申请课程 " + 
+                           courseName + "(" + courseCode + ") 失败，可能代码重复");
+                
                 JOptionPane.showMessageDialog(this, "提交失败：课程代码可能已存在，请检查。", "失败", JOptionPane.ERROR_MESSAGE);
             }
         } catch (Exception ex) {
+            // 【添加日志】开课申请异常
+            LogUtil.log(teacher.getUserId(), "开课申请异常", 
+                       "教师 " + teacher.getUserName() + " 开课申请异常：" + ex.getMessage());
+            
             JOptionPane.showMessageDialog(this, "发生未知错误：" + ex.getMessage(), "系统错误", JOptionPane.ERROR_MESSAGE);
         }
     }

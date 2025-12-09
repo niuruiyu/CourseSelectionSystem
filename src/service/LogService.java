@@ -47,4 +47,24 @@ public class LogService {
         }
         return logs;
     }
+    public void logOperation(String operatorId, String operationType, String operationContent) {
+        String sql = "INSERT INTO operation_log (operator_id, operation_type, operation_content, operation_time) " +
+                     "VALUES (?, ?, ?, NOW())";
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+        
+        try {
+            conn = DBUtils.getConnection();
+            pstmt = conn.prepareStatement(sql);
+            pstmt.setString(1, operatorId);
+            pstmt.setString(2, operationType);
+            pstmt.setString(3, operationContent);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            System.err.println("记录操作日志失败：" + e.getMessage());
+            e.printStackTrace();
+        } finally {
+            DBUtils.close(conn, pstmt, null);
+        }
+    }
 }

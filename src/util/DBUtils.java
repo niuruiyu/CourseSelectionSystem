@@ -9,9 +9,9 @@ import java.sql.Statement;
 public class DBUtils {
 
     // 【注意：请替换成你的实际数据库配置】
-    private static final String URL = "jdbc:mysql://localhost:3307/course_selection_system?useSSL=false&serverTimezone=UTC";
+    private static final String URL = "jdbc:mysql://localhost:3306/course_selection_system?useSSL=false&serverTimezone=UTC";
     private static final String USER = "root";       // 你的 MySQL 用户名
-    private static final String PASSWORD = "root"; // 你的 MySQL 密码
+    private static final String PASSWORD = "202330451462"; // 你的 MySQL 密码
 
     /**
      * 获取数据库连接

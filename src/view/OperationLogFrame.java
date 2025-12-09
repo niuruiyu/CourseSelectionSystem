@@ -1,5 +1,5 @@
 package view;
-
+import util.LogUtil;
 import model.OperationLog;
 import service.LogService;
 import util.DBUtils;
@@ -18,17 +18,19 @@ import java.util.List;
 public class OperationLogFrame extends JFrame {
     private final LogService logService = new LogService();
     private DefaultTableModel tableModel;
-
     public OperationLogFrame() {
         setTitle("系统操作日志");
         setSize(900, 600);
-        setLocationRelativeTo(null); // 居中显示
+        setLocationRelativeTo(null);
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        
+        //  记录查看日志的行为
+        LogUtil.log("用户", "查看操作日志", "打开操作日志查看窗口");
+        
         initUI();
         loadLogData();
         setVisible(true);
     }
-
     // 初始化UI
     private void initUI() {
         // 表格列：日志ID、操作人ID、操作类型、操作内容、操作时间
@@ -57,8 +59,12 @@ public class OperationLogFrame extends JFrame {
 
     // 加载日志数据
     private void loadLogData() {
-        tableModel.setRowCount(0); // 清空表格
+        tableModel.setRowCount(0);
         List<OperationLog> logs = logService.getAllOperationLogs();
+        
+        // 【添加日志】加载日志数据
+        LogUtil.log("用户", "加载操作日志", "加载操作日志，共 " + logs.size() + " 条记录");
+
         for (OperationLog log : logs) {
             tableModel.addRow(new Object[]{
                     log.getLogId(),

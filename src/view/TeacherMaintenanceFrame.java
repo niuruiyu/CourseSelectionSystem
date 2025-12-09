@@ -2,6 +2,7 @@ package view;
 
 import model.User;
 import service.UserService;
+import util.LogUtil;  // 导入日志工具类
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
@@ -20,6 +21,10 @@ public class TeacherMaintenanceFrame extends JFrame {
         setSize(700, 500);
         setLocationRelativeTo(null); // 居中显示
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        
+        //   【添加日志】打开教师维护窗口
+        LogUtil.log("管理员", "打开教师维护", "打开教师信息维护窗口");
+        
         initUI();
         loadTeacherData();
         setVisible(true);
@@ -57,6 +62,10 @@ public class TeacherMaintenanceFrame extends JFrame {
     private void loadTeacherData() {
         tableModel.setRowCount(0); // 清空表格
         List<User> teachers = userService.getAllTeachers();
+        
+        //   【添加日志】加载教师数据
+        LogUtil.log("管理员", "加载教师数据", "加载教师列表，共 " + teachers.size() + " 名教师");
+        
         for (User teacher : teachers) {
             // 从User对象中获取数据（需User类支持contact字段的getter）
             tableModel.addRow(new Object[]{
@@ -113,10 +122,17 @@ public class TeacherMaintenanceFrame extends JFrame {
 
             // 调用服务层添加
             boolean success = userService.addTeacher(teacher, account, password);
+            
+            //   【添加日志】新增教师
             if (success) {
+                LogUtil.log("管理员", "新增教师成功", 
+                           "新增教师：" + userName + "(" + userId + ")，学院：" + deptField.getText().trim() + 
+                           "，账号：" + account);
                 JOptionPane.showMessageDialog(this, "新增成功");
                 loadTeacherData(); // 刷新表格
             } else {
+                LogUtil.log("管理员", "新增教师失败", 
+                           "尝试新增教师：" + userName + "(" + userId + ") 失败，可能工号或账号重复");
                 JOptionPane.showMessageDialog(this, "新增失败（可能工号或账号重复）", "操作失败", JOptionPane.ERROR_MESSAGE);
             }
         }
@@ -158,10 +174,18 @@ public class TeacherMaintenanceFrame extends JFrame {
             updatedTeacher.setContact(contactField.getText().trim());
 
             boolean success = userService.updateTeacher(updatedTeacher);
+            
+            //   【添加日志】修改教师信息
             if (success) {
+                LogUtil.log("管理员", "修改教师信息", 
+                           "修改教师 " + userId + " 的信息，" + 
+                           "原姓名：" + userName + "，新姓名：" + nameField.getText().trim() + "，" +
+                           "新学院：" + deptField.getText().trim());
                 JOptionPane.showMessageDialog(this, "修改成功");
                 loadTeacherData();
             } else {
+                LogUtil.log("管理员", "修改教师信息失败", 
+                           "修改教师 " + userId + " 的信息失败");
                 JOptionPane.showMessageDialog(this, "修改失败", "操作失败", JOptionPane.ERROR_MESSAGE);
             }
         }
@@ -184,10 +208,16 @@ public class TeacherMaintenanceFrame extends JFrame {
 
         if (confirm == JOptionPane.YES_OPTION) {
             boolean success = userService.deleteTeacher(userId);
+            
+            //   【添加日志】删除教师
             if (success) {
+                LogUtil.log("管理员", "删除教师成功", 
+                           "删除教师：" + userName + "(" + userId + ")");
                 JOptionPane.showMessageDialog(this, "删除成功");
                 loadTeacherData();
             } else {
+                LogUtil.log("管理员", "删除教师失败", 
+                           "删除教师：" + userName + "(" + userId + ") 失败，可能有关联课程");
                 JOptionPane.showMessageDialog(this, "删除失败（可能存在关联课程）", "操作失败", JOptionPane.ERROR_MESSAGE);
             }
         }
