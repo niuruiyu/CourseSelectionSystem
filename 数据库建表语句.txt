@@ -1,0 +1,292 @@
+-- ==========================================
+-- 1. 数据库和环境设置
+-- ==========================================
+
+-- 创建数据库 (如果不存在)
+CREATE DATABASE IF NOT EXISTS course_selection_system
+CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+
+-- 使用数据库
+USE course_selection_system;
+
+-- ==========================================
+-- 2. 表结构定义 (DDL)
+-- ==========================================
+
+-- 2.1 用户信息表 (user_info)
+CREATE TABLE user_info (
+    user_id VARCHAR(20) PRIMARY KEY COMMENT '用户ID/学号/工号',
+    user_name VARCHAR(50) NOT NULL COMMENT '姓名',
+    account VARCHAR(50) UNIQUE NOT NULL COMMENT '账号',
+    password VARCHAR(100) NOT NULL COMMENT '密码 (存储SHA-256哈希值)',
+    role ENUM('Student', 'Teacher', 'EduAdmin', 'SysAdmin') NOT NULL COMMENT '角色',
+    contact VARCHAR(20) COMMENT '联系方式',
+    department VARCHAR(50) COMMENT '所属学院/部门',
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'
+) COMMENT='用户信息表';
+
+-- 2.2 课程信息表 (course_info)
+CREATE TABLE course_info (
+    course_code VARCHAR(20) PRIMARY KEY COMMENT '课程代码',
+    course_name VARCHAR(100) NOT NULL COMMENT '课程名称',
+    credit DECIMAL(3,1) NOT NULL COMMENT '学分',
+    class_hour INT NOT NULL COMMENT '课时',
+    teacher_id VARCHAR(20) NOT NULL COMMENT '教师工号',
+    schedule_time VARCHAR(100) COMMENT '上课时间 (示例: 周一1-2节)',
+    classroom VARCHAR(50) COMMENT '上课地点',
+    capacity_limit INT DEFAULT 60 COMMENT '容量上限',
+    current_selected INT DEFAULT 0 COMMENT '当前已选人数',
+    course_type VARCHAR(20) COMMENT '课程类型',
+    status ENUM('Pending', 'Rejected', 'Published', 'Offline', 'Deleted') DEFAULT 'Pending' COMMENT '课程状态',
+    description TEXT COMMENT '课程简介',
+    CONSTRAINT fk_course_teacher FOREIGN KEY (teacher_id) REFERENCES user_info(user_id)
+) COMMENT='课程信息表';
+
+-- 2.3 选课记录表 (selection_record)
+CREATE TABLE selection_record (
+    record_id INT AUTO_INCREMENT PRIMARY KEY COMMENT '选课记录ID',
+    student_id VARCHAR(20) NOT NULL COMMENT '学号',
+    course_code VARCHAR(20) NOT NULL COMMENT '课程代码',
+    selection_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '选课时间',
+    status ENUM('Selected', 'Dropped', 'Completed', 'Failed') DEFAULT 'Selected' COMMENT '状态',
+    UNIQUE KEY uq_student_course (student_id, course_code),
+    CONSTRAINT fk_select_student FOREIGN KEY (student_id) REFERENCES user_info(user_id),
+    CONSTRAINT fk_select_course FOREIGN KEY (course_code) REFERENCES course_info(course_code)
+) COMMENT='选课记录表';
+
+-- 2.4 审核记录表 (audit_record)
+CREATE TABLE audit_record (
+    audit_id INT AUTO_INCREMENT PRIMARY KEY COMMENT '审核记录ID',
+    target_id VARCHAR(50) NOT NULL COMMENT '申请编号/课程代码',
+    audit_type ENUM('CourseOpen', 'SpecialSelect') NOT NULL COMMENT '审核类型',
+    result ENUM('Pass', 'Reject') NOT NULL COMMENT '审核结果',
+    audit_opinion VARCHAR(255) COMMENT '审核意见',
+    auditor_id VARCHAR(20) COMMENT '审核人ID',
+    audit_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '审核时间',
+    CONSTRAINT fk_audit_auditor FOREIGN KEY (auditor_id) REFERENCES user_info(user_id)
+) COMMENT='审核记录表';
+
+-- 2.5 操作日志表 (operation_log)
+CREATE TABLE operation_log (
+    log_id INT AUTO_INCREMENT PRIMARY KEY COMMENT '日志ID',
+    operator_id VARCHAR(20) COMMENT '操作人ID',
+    operation_type VARCHAR(50) COMMENT '操作类型',
+    operation_content TEXT COMMENT '操作具体内容',
+    operation_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间'
+) COMMENT='操作日志表';
+
+-- 2.6 【新增】课程先修关系表 (course_prerequisite)
+CREATE TABLE course_prerequisite (
+    course_code VARCHAR(20) NOT NULL COMMENT '当前要选的课程代码',
+    prereq_code VARCHAR(20) NOT NULL COMMENT '先修课程代码',
+    PRIMARY KEY (course_code, prereq_code),
+    CONSTRAINT fk_course_prereq_current FOREIGN KEY (course_code) REFERENCES course_info(course_code),
+    CONSTRAINT fk_course_prereq_required FOREIGN KEY (prereq_code) REFERENCES course_info(course_code)
+) COMMENT='课程先修关系表';
+
+
+-- ==========================================
+-- 3. 视图 (Views) - 用于统计功能
+-- ==========================================
+
+-- 3.1 课程选课情况统计视图
+CREATE OR REPLACE VIEW v_course_stats AS
+SELECT
+    c.course_code,
+    c.course_name,
+    c.teacher_id,
+    u.user_name AS teacher_name,
+    c.credit,                    -- 添加学分
+    c.schedule_time,
+    c.classroom,
+    c.capacity_limit,
+    c.current_selected,
+    CONCAT(ROUND((c.current_selected / c.capacity_limit * 100), 2), '%') AS saturation_rate -- 选课饱和度
+FROM course_info c
+JOIN user_info u ON c.teacher_id = u.user_id
+WHERE c.status = 'Published';
+
+-- ==========================================
+-- 4. 存储过程 (Stored Procedures) - 核心业务逻辑
+-- ==========================================
+
+-- 临时更改分隔符为 //，以便存储过程定义内部的分号不被视为语句结束
+DELIMITER //
+
+-- 4.1 学生选课存储过程 (增强版: 包含先修课和详细冲突提示)
+DROP PROCEDURE IF EXISTS sp_student_select_course //
+
+CREATE PROCEDURE sp_student_select_course(
+    IN p_student_id VARCHAR(20),
+    IN p_course_code VARCHAR(20),
+    OUT p_message VARCHAR(100)
+)
+BEGIN
+    DECLARE v_capacity INT;
+    DECLARE v_current INT;
+    DECLARE v_status VARCHAR(20);
+    DECLARE v_schedule VARCHAR(100);
+    DECLARE v_exists_count INT;
+    DECLARE v_conflict_course_name VARCHAR(100) DEFAULT NULL; -- 冲突课程名
+    DECLARE v_uncompleted_prereq_name VARCHAR(100) DEFAULT NULL; -- 未完成先修课名
+
+    -- 开启事务
+    START TRANSACTION;
+
+    -- 检查课程状态和容量 (加锁防止并发问题)
+    SELECT capacity_limit, current_selected, status, schedule_time
+    INTO v_capacity, v_current, v_status, v_schedule
+    FROM course_info
+    WHERE course_code = p_course_code FOR UPDATE;
+
+    IF v_status IS NULL OR v_status != 'Published' THEN
+        SET p_message = '错误：课程不存在或未开放选课';
+        ROLLBACK;
+    ELSEIF v_current >= v_capacity THEN
+        SET p_message = '失败：课程容量已满';
+        ROLLBACK;
+    ELSE
+        -- 1. 检查是否已选过该课
+        SELECT COUNT(*) INTO v_exists_count
+        FROM selection_record
+        WHERE student_id = p_student_id AND course_code = p_course_code AND status = 'Selected';
+
+        IF v_exists_count > 0 THEN
+            SET p_message = '失败：你已选修过该课程';
+            ROLLBACK;
+        ELSE
+            -- 2. 【新增】先修课检查
+            SELECT ci.course_name INTO v_uncompleted_prereq_name
+            FROM course_prerequisite cp
+            JOIN course_info ci ON cp.prereq_code = ci.course_code
+            -- 检查学生是否已完成先修课 (这里假设 status='Completed' 才算完成)
+            LEFT JOIN selection_record sr ON cp.prereq_code = sr.course_code AND sr.student_id = p_student_id AND sr.status = 'Completed'
+            WHERE cp.course_code = p_course_code
+              AND sr.record_id IS NULL -- 如果记录不存在 (未选/未完成)
+            LIMIT 1;
+
+            IF v_uncompleted_prereq_name IS NOT NULL THEN
+                SET p_message = CONCAT('失败：请先修读完成《', v_uncompleted_prereq_name, '》');
+                ROLLBACK;
+            ELSE
+                -- 3. 【改进】时间冲突检查 (返回冲突课程名称)
+                SELECT ci.course_name INTO v_conflict_course_name
+                FROM selection_record sr
+                JOIN course_info ci ON sr.course_code = ci.course_code
+                WHERE sr.student_id = p_student_id
+                  AND sr.status = 'Selected'
+                  AND ci.schedule_time = v_schedule -- 简单冲突检测
+                LIMIT 1;
+
+                IF v_conflict_course_name IS NOT NULL THEN
+                    SET p_message = CONCAT('失败：上课时间与已选课程《', v_conflict_course_name, '》冲突');
+                    ROLLBACK;
+                ELSE
+                    -- 4. 执行选课插入 & 更新课程人数
+                    INSERT INTO selection_record (student_id, course_code, status)
+                    VALUES (p_student_id, p_course_code, 'Selected');
+
+                    UPDATE course_info
+                    SET current_selected = current_selected + 1
+                    WHERE course_code = p_course_code;
+
+                    SET p_message = '选课成功';
+                    COMMIT;
+                END IF;
+            END IF;
+        END IF;
+    END IF;
+END //
+
+-- 恢复语句分隔符为默认的分号 ;
+DELIMITER ;
+
+
+-- ==========================================
+-- 5. 触发器 (Triggers) - 自动化维护
+-- ==========================================
+
+DELIMITER //
+
+-- 5.1 退课自动释放名额触发器
+CREATE TRIGGER trg_after_drop_course
+AFTER UPDATE ON selection_record
+FOR EACH ROW
+BEGIN
+    -- 只有当状态从 'Selected' 变为 'Dropped' 时才触发
+    IF OLD.status = 'Selected' AND NEW.status = 'Dropped' THEN
+        -- 1. 减少课程已选人数
+        UPDATE course_info
+        SET current_selected = current_selected - 1
+        WHERE course_code = NEW.course_code;
+
+        -- 2. 自动记录操作日志
+        INSERT INTO operation_log (operator_id, operation_type, operation_content)
+        VALUES (NEW.student_id, '退课', CONCAT('学生退选课程:', NEW.course_code));
+    END IF;
+END //
+
+DELIMITER ;
+
+-- ==========================================
+-- 6. 初始化测试数据 (DML) - 满足实用性要求
+-- ==========================================
+
+-- 密码使用 SHA2('123456', 256) 加密存储
+-- 对应的哈希值是：8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92
+SET @hashed_password = SHA2('123456', 256);
+
+-- 插入管理员和教师
+INSERT INTO user_info (user_id, user_name, account, password, role, department) VALUES
+('ADMIN001', '张管理员', 'admin', @hashed_password, 'EduAdmin', '教务处'),
+('T001', '王老师', 't001', @hashed_password, 'Teacher', '计算机学院'),
+('T002', '李老师', 't002', @hashed_password, 'Teacher', '数学学院');
+
+-- 插入学生
+INSERT INTO user_info (user_id, user_name, account, password, role, department) VALUES
+('S2021001', '小明', 's001', @hashed_password, 'Student', '计算机学院'),
+('S2021002', '小红', 's002', @hashed_password, 'Student', '计算机学院');
+
+-- 插入课程
+-- 插入课程（包含上课地点，所有课程只分配给T001和T002两位老师）
+INSERT INTO course_info (course_code, course_name, credit, class_hour, teacher_id, schedule_time, capacity_limit, status, course_type, classroom) VALUES
+('CS101', '数据库系统概论', 4.0, 64, 'T001', '周一1-2节', 50, 'Published', '必修', 'A1-201'),
+('MATH101', '高等数学', 5.0, 80, 'T002', '周二3-4节', 100, 'Published', '必修', 'A2-301'),
+('ART001', '美术鉴赏', 2.0, 32, 'T002', '周一1-2节', 30, 'Published', '选修', 'A3-101'), -- 与 CS101 故意设置时间冲突
+('CS201', '高级算法', 3.0, 48, 'T001', '周四5-6节', 40, 'Published', '专业课', 'A1-302'),
+('ENG101', '大学英语', 3.0, 48, 'T001', '周三1-2节', 60, 'Published', '必修', 'A2-202'),
+('PHY101', '大学物理', 4.0, 64, 'T002', '周五3-4节', 80, 'Published', '必修', 'A4-401'),
+('PE001', '体育（篮球）', 1.0, 32, 'T001', '周四7-8节', 40, 'Published', '选修', '体育馆'),
+('MUSIC001', '音乐欣赏', 2.0, 32, 'T002', '周三5-6节', 30, 'Published', '选修', '音乐厅'),
+('CS301', '人工智能导论', 3.0, 48, 'T001', '周二7-8节', 35, 'Published', '专业课', 'A1-303'),
+('MATH201', '线性代数', 3.0, 48, 'T002', '周一3-4节', 70, 'Published', '必修', 'A2-302'),
+('EE101', '电路基础', 4.0, 64, 'T001', '周三3-4节', 45, 'Published', '专业课', 'A4-102'),
+('CHEM101', '普通化学', 3.0, 48, 'T002', '周五1-2节', 55, 'Published', '必修', 'A3-201'),
+('CS401', '软件工程', 3.0, 48, 'T001', '周二5-6节', 40, 'Published', '专业课', 'A1-401'),
+('PHIL001', '哲学导论', 2.0, 32, 'T002', '周四1-2节', 25, 'Published', '通识课', 'A2-101'),
+('ECON101', '经济学原理', 3.0, 48, 'T001', '周五5-6节', 65, 'Published', '选修', 'A4-301');
+
+-- 【新增】插入先修课要求
+-- 高级课程需要先修基础课程
+
+-- 1. CS201（高级算法）需要先修 MATH101（高等数学）
+INSERT INTO course_prerequisite (course_code, prereq_code) VALUES
+('CS201', 'MATH101');
+
+-- 2. CS401（软件工程）需要先修 CS101（数据库系统概论）
+INSERT INTO course_prerequisite (course_code, prereq_code) VALUES
+('CS401', 'CS101');
+
+-- 3. EE101（电路基础）需要先修 MATH101（高等数学）
+INSERT INTO course_prerequisite (course_code, prereq_code) VALUES
+('EE101', 'MATH101');
+
+-- 6. CS301（人工智能导论）也需要 MATH101（高等数学）
+INSERT INTO course_prerequisite (course_code, prereq_code) VALUES
+('CS301', 'MATH101');
+
+-- 7. CHEM101（普通化学）需要先修 MATH101（高等数学）用于计算
+INSERT INTO course_prerequisite (course_code, prereq_code) VALUES
+('CHEM101', 'MATH101');
+
+
