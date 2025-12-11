@@ -2,9 +2,7 @@ package util;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
@@ -63,7 +61,10 @@ public class CSVExporter {
     private static boolean exportTableToCSV(JTable table, File file) {
         DefaultTableModel model = (DefaultTableModel) table.getModel();
         
-        try (FileWriter writer = new FileWriter(file, StandardCharsets.UTF_8)) {
+        try (OutputStreamWriter writer = new OutputStreamWriter(
+                new FileOutputStream(file),
+                StandardCharsets.UTF_8
+        ))  {
             // 1. 写入UTF-8 BOM（确保Excel正确识别中文）
             writer.write("\uFEFF");
             
@@ -172,7 +173,10 @@ public class CSVExporter {
                 file = new File(file.getAbsolutePath() + ".csv");
             }
             
-            try (FileWriter writer = new FileWriter(file, java.nio.charset.StandardCharsets.UTF_8)) {
+            try (OutputStreamWriter writer = new OutputStreamWriter(
+                    new FileOutputStream(file),  // 基于File对象创建文件输出流
+                    java.nio.charset.StandardCharsets.UTF_8  // 显式指定UTF-8字符集
+            )) {
                 // UTF-8 BOM
                 writer.write("\uFEFF");
                 
